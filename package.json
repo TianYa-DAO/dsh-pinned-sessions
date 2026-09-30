@@ -2,8 +2,28 @@
   "name": "dsh-pinned-sessions",
   "version": "0.1.0",
   "description": "Keeps running, finished-but-unopened and currently open sessions at the top of the DSH Web sidebar workspace list.",
+  "license": "MIT",
   "type": "module",
   "main": "./index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TianYa-DAO/dsh-pinned-sessions.git"
+  },
+  "homepage": "https://github.com/TianYa-DAO/dsh-pinned-sessions#readme",
+  "bugs": {
+    "url": "https://github.com/TianYa-DAO/dsh-pinned-sessions/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "sidebar",
+    "sessions",
+    "pinned"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,6 +36,8 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
+    "LICENSE",
     "tests"
   ],
   "scripts": {
