@@ -1,0 +1,40 @@
+{
+  "name": "dsh-pinned-sessions",
+  "version": "0.1.0",
+  "description": "Keeps running, finished-but-unopened and currently open sessions at the top of the DSH Web sidebar workspace list.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./client.js": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "tests"
+  ],
+  "scripts": {
+    "test": "node tests/selfcheck.cjs"
+  },
+  "dsh": {
+    "id": "dsh-pinned-sessions",
+    "name": "Pinned sessions",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-store",
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ]
+    }
+  }
+}

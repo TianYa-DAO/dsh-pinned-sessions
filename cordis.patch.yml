@@ -1,0 +1,6 @@
+# dsh-pinned-sessions bundle patch: one host row whose client half carries the
+# whole feature. The row itself does nothing on the Host plane; it exists so the
+# Client registry can deliver ./client.js to the browser.
+- insert:
+    - id: pinned-sessions
+      name: dsh-pinned-sessions
