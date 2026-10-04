@@ -1,6 +1,6 @@
 {
   "name": "dsh-pinned-sessions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps running, finished-but-unopened and currently open sessions at the top of the DSH Web sidebar workspace list.",
   "license": "MIT",
   "type": "module",
