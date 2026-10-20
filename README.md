@@ -26,7 +26,7 @@ sidebar
 └─ Workspace group B
 ```
 
-1. **Globally pinned sessions** — chosen from a Session's "..." menu; they stay in their own workspace group below as well.
+1. **Globally pinned sessions** — chosen from a Session's "..." menu; they stay in their own workspace group below as well. A small chevron on the left of the caption folds this part to its heading (the count stays readable), and while it is folded these Sessions are listed in their state groups again, so folding never hides a running or unread one.
 2. **Running / Unread / Open now** — derived from session state:
 
    | Group | Condition | Marker |
@@ -35,7 +35,7 @@ sidebar
    | Unread | session status `completionUnread === true` (finished while you had not opened it) | green dot |
    | Open now | session retained by the main view (`retainedBy.mainView > 0`) | hollow ring |
 
-   A session appears in one of these groups only, in that priority order. A globally pinned session is left out of these groups — the dot on its row in the pinned part carries the same state.
+   A session appears in one of these groups only, in that priority order. A globally pinned session is left out of these groups while the pinned part is expanded — the dot on its row carries the same state — and returns to them while that part is folded.
 3. **Globally pinned workspaces** — chosen from a workspace's "..." menu; each renders as a collapsible group whose sessions can be opened right there, and that workspace's own group is hidden from the list below while it is pinned.
 
 Archived sessions and subagent child sessions never appear. Rows are ordered by most recent update, empty parts are omitted, and the whole section stays unrendered when every part is empty. Clicking a row opens that session.
@@ -65,10 +65,10 @@ dsh plugin add dsh-pinned-sessions
 From a release tarball:
 
 ```sh
-dsh plugin add https://github.com/TianYa-DAO/dsh-pinned-sessions/releases/latest/download/dsh-pinned-sessions-0.2.0.tgz
+dsh plugin add https://github.com/TianYa-DAO/dsh-pinned-sessions/releases/latest/download/dsh-pinned-sessions-0.2.1.tgz
 ```
 
-In the desktop application, install it from the Plugins page instead. The package declares `dsh.bundle`, so the profile mounts its `cordis.patch.yml` row and the client registry serves `./client.js`.
+In the desktop application, install it from the Plugins page instead. The package declares `dsh.bundle`, so the profile mounts its `cordis.patch.yml` row and the client registry serves `./client.js`. It also declares `engines.dsh` (`>=0.2.0-rc.2 <0.3.0`), so the market shows the host requirement and refuses a version it cannot run.
 
 ## How it works
 
@@ -92,7 +92,7 @@ Loads `client.js` through a stubbed dynamic-module protocol and checks the facto
 1. Placement depends on the shipped client's DOM and class names (`listArea`, `projectRow`, `searchResultRow`, `rail`, `list`). A sidebar refactor in DSH requires updating the selectors in `client.js`.
 2. The workspace "..." menu row is injected because DSH declares no slot for it; a change to that popup's structure requires updating the lookup in `client.js`.
 3. Client API renames can break registration; the plugin warns instead of failing silently when `uiWorkspace` is unavailable, but a renamed hook or service still needs a code update.
-4. Tested against DSH `0.2.0-rc.2`.
+4. Tested against DSH `0.2.1-rc.1`; `engines.dsh` keeps the range honest about that.
 
 ## License
 

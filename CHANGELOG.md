@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1] - 2026-10-20
+
+1. A small chevron on the left of the "Pinned" caption folds that part to its heading; the count stays readable and the folded state persists.
+2. While that part is folded, its Sessions return to the Running / Unread / Open now groups, so folding never hides a Session that is still working.
+3. Declares `engines.dsh` (`>=0.2.0-rc.2 <0.3.0`); the market shows the host requirement from it and refuses an install it cannot run.
+4. Runtime hardening: the anchor resolution is cached instead of rescanning the list on every reconcile tick, an unchanged hide rule is no longer rewritten, a stale pin is pruned after a 60s grace, and the injected CSS fails open with a one-shot warning if it ever stops matching.
+5. A pinned row's tooltip carries its last activity time.
+6. The self-check covers the selector table, the fold toggle and the pin-pruning action.
+
 ## [0.2.0] - 2026-10-04
 
 1. A Session's "..." menu gains **Pin globally / Unpin globally**, registered in the shipped `sidebar.workspaces.session.menu.item` list slot (order 450, after Archive).

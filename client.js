@@ -33,7 +33,7 @@
  *     `data-row-key="workspace:<key>"` and the open-state class), which is the
  *     only way a plugin can add a row there without replacing the browser.
  *
- * 设置 → 通用 carries the on/off switch; preferences are persisted by the
+ * Settings -> General carries the on/off switch; preferences are persisted by the
  * shared Client store.
  */
 (() => {
@@ -59,9 +59,27 @@
         var HOST_ATTR = "data-dsh-pinned-sessions";
         var MENU_HOST_ATTR = "data-dsh-pinned-sessions-menu";
         var RECONCILE_MS = 1500;
+        var PRUNE_GRACE_MS = 60000;
         var WORKSPACE_ROW_PREFIX = "workspace:";
         var SESSION_ROW_PREFIX = "session:";
         var GLOBAL_PIN_ORDER = 450;
+        /**
+         * Every shipped-DOM fact this plugin depends on, in one place. A sidebar
+         * refactor in DSH changes these and nothing else; `selfcheck` asserts their
+         * shape so a rename shows up as a failing check instead of a silent
+         * disappearance in the app.
+         */
+        var SELECTORS = {
+          region: '[data-slot="sidebar.workspaces"]',
+          workspaceRow: '[data-row-key^="workspace:"]',
+          projectRow: '[class*="projectRow"]',
+          searchResultRow: '[class*="searchResultRow"]',
+          menuitem: '[role="menuitem"]',
+          listAreaToken: "listArea",
+          scrollerToken: /(^|_)list$/,
+          railToken: /(?:^|\s)[^\s]*rail(?:\s|$)/,
+          openRowClass: "menuOpen",
+        };
 
         var MenuItemButton = ui.MenuItemButton;
         var IconPinFill = ui.IconPinFillRegular;
@@ -71,7 +89,11 @@
           ".dshps-host{box-sizing:border-box;flex:none;padding-bottom:6px;margin-bottom:2px;border-bottom:.5px solid var(--dsw-alias-border-l2)}",
           ".dshps-heading{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;padding:2px 8px;letter-spacing:.02em}",
           ".dshps-group{padding-top:2px}",
-          ".dshps-groupTitle{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;padding:2px 8px 2px 28px;display:flex;align-items:center;gap:6px}",
+          ".dshps-groupTitle{position:relative;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;padding:2px 8px 2px 28px;display:flex;align-items:center;gap:6px}",
+          ".dshps-groupToggle{position:absolute;left:9px;top:2px;width:16px;height:16px;padding:0;border:0;border-radius:var(--dsw-radius-sm,4px);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer;font-family:inherit;font-size:11px;line-height:16px;text-align:center;transition:transform .12s ease}",
+          ".dshps-groupToggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
+          ".dshps-groupToggle:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:0}",
+          ".dshps-groupToggleOpen{transform:rotate(90deg)}",
           ".dshps-count{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}",
           ".dshps-row{box-sizing:border-box;width:100%;height:32px;padding:0 8px;border:0;background:transparent;border-radius:var(--dsw-radius-md,8px);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:14px;line-height:20px;text-align:left;cursor:pointer;user-select:none;display:flex;align-items:center;gap:0}",
           ".dshps-row:hover{background:var(--dsw-alias-interactive-bg-hover)}",
@@ -117,6 +139,8 @@
           "row.open": "打开会话 {name}",
           "workspace.expand": "展开 {name}",
           "workspace.collapse": "折叠 {name}",
+          "group.expand": "展开 {name}",
+          "group.collapse": "折叠 {name}",
           "menu.pinGlobal": "全局置顶",
           "menu.unpinGlobal": "取消全局置顶",
           "action.unpin": "取消全局置顶",
@@ -134,6 +158,8 @@
           "row.open": "Open session {name}",
           "workspace.expand": "Expand {name}",
           "workspace.collapse": "Collapse {name}",
+          "group.expand": "Expand {name}",
+          "group.collapse": "Collapse {name}",
           "menu.pinGlobal": "Pin globally",
           "menu.unpinGlobal": "Unpin globally",
           "action.unpin": "Unpin globally",
@@ -191,9 +217,9 @@
 
         /**
          * Fold the Session list, status and Workspace snapshots into the three
-         * pinned parts. Status groups never dedupe against the explicit pins: a
-         * globally pinned Session that is also running appears in both, which is
-         * what "keep the status groups as they are" means here.
+         * pinned parts. While the explicit pins are expanded they are the single
+         * listing of those Sessions (each row's dot carries its state); once that
+         * part is collapsed the same Sessions return to the state groups.
          */
         function deriveSections(list, statuses, workspaceState, prefs) {
           var empty = { sessionPins: [], statusGroups: [], workspacePins: [] };
@@ -245,8 +271,10 @@
             var pinnedRow = rowOf(pinnedSessions[p]);
             if (pinnedRow !== null) sessionPins.push(pinnedRow);
           }
-          // A globally pinned Session is listed once, at the top; its state is the
-          // dot on that row, so the status groups below must not repeat it.
+          // A pinned Session is listed once while its part is expanded; collapsing
+          // that part hands it back to the state groups, so folding the pins away
+          // can never hide a running or unread Session from the screen.
+          var pinsCollapsed = prefs !== null && typeof prefs === "object" && prefs.sessionPinsCollapsed === true;
           var pinnedIds = {};
           for (var q = 0; q < sessionPins.length; q++) pinnedIds[sessionPins[q].id] = true;
 
@@ -255,7 +283,7 @@
           var current = [];
           for (var i = 0; i < list.ids.length; i++) {
             var id = list.ids[i];
-            if (pinnedIds[id] === true) continue;
+            if (pinsCollapsed !== true && pinnedIds[id] === true) continue;
             var row = rowOf(id);
             if (row === null) continue;
             var state = statuses && typeof statuses.get === "function" ? statuses.get(id) : undefined;
@@ -302,9 +330,10 @@
         }
 
         /**
-         * Own the host element between the region's section header and its list.
-         * Returns the element to portal into, or null while the section must not
-         * render (feature off, region absent, rail state, flat grouping, search).
+         * Own the host element at the top of the region's own scrolling list, so the
+         * pinned section shares that list's scroll region. Returns the element to
+         * portal into, or null while the section must not render (feature off,
+         * region absent, rail state, flat grouping, search).
          */
         function useAnchorHost(active) {
           var pair = react.useState(null);
@@ -320,7 +349,17 @@
             var observer = null;
             var watchedRegion = null;
             var watchedRoot = null;
+            var warned = {};
+            var regionNode = null;
+            var rootNode = null;
+            var listAreaNode = null;
+            var scrollerNode = null;
 
+            var warnOnce = (reason) => {
+              if (warned[reason] === true) return;
+              warned[reason] = true;
+              console.warn("[dsh-pinned-sessions] pinned section hidden: " + reason);
+            };
             var detach = () => {
               if (node.parentNode !== null) node.parentNode.removeChild(node);
               if (attached) {
@@ -331,16 +370,14 @@
             var listAreaOf = (root) => {
               for (var i = 0; i < root.children.length; i++) {
                 var child = root.children[i];
-                if (typeof child.className === "string" && child.className.indexOf("listArea") >= 0) return child;
+                if (typeof child.className === "string" && child.className.indexOf(SELECTORS.listAreaToken) >= 0) return child;
               }
               return null;
             };
             /**
              * The scrolling rows container inside the list area: the one element
              * carrying the browser's own `list` class (scoped as `<hash>_list`, so
-             * the token ends with `_list`). The pinned section is inserted at its
-             * top so both share one scroll region instead of the section clipping
-             * its own overflow.
+             * the token ends with `_list`).
              */
             var scrollerOf = (listArea) => {
               var candidates = listArea.querySelectorAll("div");
@@ -349,45 +386,67 @@
                 if (typeof className !== "string") continue;
                 var tokens = className.split(/\s+/);
                 for (var t = 0; t < tokens.length; t++) {
-                  if (/(^|_)list$/.test(tokens[t])) return candidates[i];
+                  if (SELECTORS.scrollerToken.test(tokens[t])) return candidates[i];
                 }
               }
               return null;
             };
             var isRail = (root) => typeof root.className === "string"
-              && /(?:^|\s)[^\s]*rail(?:\s|$)/.test(root.className);
+              && SELECTORS.railToken.test(root.className);
+            /**
+             * Point the four cached nodes at the live elements, re-reading them only
+             * when a cached one left the document. Resolution is the expensive part
+             * (a subtree scan), while the mode checks below are cheap and have to run
+             * every tick: a cached node survives a rail toggle or a search overlay.
+             */
+            var resolve = () => {
+              if (regionNode !== null && regionNode.isConnected
+                && rootNode !== null && rootNode.isConnected
+                && listAreaNode !== null && listAreaNode.isConnected
+                && scrollerNode !== null && scrollerNode.isConnected) return true;
+              regionNode = document.querySelector(SELECTORS.region);
+              rootNode = regionNode === null ? null : regionNode.firstElementChild;
+              listAreaNode = rootNode === null ? null : listAreaOf(rootNode);
+              scrollerNode = listAreaNode === null ? null : scrollerOf(listAreaNode);
+              return regionNode !== null && rootNode !== null && listAreaNode !== null && scrollerNode !== null;
+            };
 
             var ensure = () => {
               if (disposed) return;
-              var region = document.querySelector('[data-slot="sidebar.workspaces"]');
-              var root = region === null ? null : region.firstElementChild;
-              if (root === null) {
+              if (!resolve()) {
+                detach();
+                if (regionNode === null) warnOnce("the sidebar workspaces region is absent");
+                else if (rootNode === null) warnOnce("the region has no root element");
+                else if (listAreaNode === null) warnOnce("the list area is absent");
+                else warnOnce("the row scroller is absent");
+                return;
+              }
+              if (isRail(rootNode)) {
                 detach();
                 return;
               }
-              var listArea = isRail(root) ? null : listAreaOf(root);
-              var scroller = listArea === null ? null : scrollerOf(listArea);
-              if (listArea === null
-                || scroller === null
-                || listArea.querySelector('[class*="projectRow"]') === null
-                || listArea.querySelector('[class*="searchResultRow"]') !== null) {
+              if (listAreaNode.querySelector(SELECTORS.projectRow) === null) {
                 detach();
                 return;
               }
-              if (node.parentNode !== scroller || node !== scroller.firstElementChild) {
-                scroller.insertBefore(node, scroller.firstChild);
+              if (listAreaNode.querySelector(SELECTORS.searchResultRow) !== null) {
+                detach();
+                return;
+              }
+              if (node.parentNode !== scrollerNode || node !== scrollerNode.firstElementChild) {
+                scrollerNode.insertBefore(node, scrollerNode.firstChild);
               }
               if (!attached) {
                 attached = true;
                 setHost(node);
               }
-              if (watchedRegion !== region || watchedRoot !== root) {
+              if (watchedRegion !== regionNode || watchedRoot !== rootNode) {
                 if (observer !== null) observer.disconnect();
                 observer = new MutationObserver(() => { ensure(); });
-                observer.observe(region, { childList: true, subtree: true });
-                observer.observe(root, { attributes: true, attributeFilter: ["class"] });
-                watchedRegion = region;
-                watchedRoot = root;
+                observer.observe(regionNode, { childList: true, subtree: true });
+                observer.observe(rootNode, { attributes: true, attributeFilter: ["class"] });
+                watchedRegion = regionNode;
+                watchedRoot = rootNode;
               }
             };
 
@@ -423,6 +482,7 @@
             var disposed = false;
             var key = null;
             var observer = null;
+            var warned = false;
 
             var detach = () => {
               if (node.parentNode !== null) node.parentNode.removeChild(node);
@@ -432,10 +492,10 @@
               }
             };
             var openRowKey = () => {
-              var rows = document.querySelectorAll('[data-row-key^="' + WORKSPACE_ROW_PREFIX + '"]');
+              var rows = document.querySelectorAll(SELECTORS.workspaceRow);
               for (var i = 0; i < rows.length; i++) {
                 var className = rows[i].className;
-                if (typeof className === "string" && className.indexOf("menuOpen") >= 0) {
+                if (typeof className === "string" && className.indexOf(SELECTORS.openRowClass) >= 0) {
                   return rows[i].getAttribute("data-row-key").slice(WORKSPACE_ROW_PREFIX.length);
                 }
               }
@@ -451,7 +511,7 @@
                 for (var c = 0; c < menu.children.length; c++) {
                   var viewport = menu.children[c];
                   if (viewport.getAttribute("role") !== "presentation") continue;
-                  if (viewport.querySelector('[role="menuitem"]') === null) continue;
+                  if (viewport.querySelector(SELECTORS.menuitem) === null) continue;
                   return viewport;
                 }
               }
@@ -462,6 +522,10 @@
               var nextKey = openRowKey();
               var viewport = nextKey === null ? null : openMenuViewport();
               if (nextKey === null || viewport === null) {
+                if (nextKey !== null && !warned) {
+                  warned = true;
+                  console.warn("[dsh-pinned-sessions] workspace menu row not injected: the menu popup was not found");
+                }
                 detach();
                 return;
               }
@@ -499,11 +563,12 @@
          * the section itself is hidden (rail, flat list, search).
          */
         function useGroupHiding(active, pinnedWorkspaces, workspaceItems) {
+          var broken = react.useRef(false);
           react.useEffect(() => {
             if (typeof document === "undefined") return undefined;
             var tag = document.getElementById(HIDE_STYLE_ID);
-            if (!active) {
-              if (tag !== null) tag.textContent = "";
+            if (!active || broken.current) {
+              if (tag !== null && tag.textContent !== "") tag.textContent = "";
               return undefined;
             }
             if (tag === null) {
@@ -526,7 +591,17 @@
                 }
               }
             }
-            tag.textContent = rules.join("");
+            var text = rules.join("");
+            if (tag.textContent !== text) tag.textContent = text;
+            if (pinned.length === 0) return undefined;
+            // A rule that matches nothing hides nothing while the row is still
+            // listed, so one probe decides whether hiding works at all. Failing
+            // open (show it twice) beats hiding the wrong row or nothing visible.
+            var probe = document.querySelector('[data-row-key="' + WORKSPACE_ROW_PREFIX + cssEscape(pinned[0]) + '"]');
+            if (probe === null || window.getComputedStyle(probe).display === "none") return undefined;
+            broken.current = true;
+            tag.textContent = "";
+            console.warn("[dsh-pinned-sessions] hiding did not apply; the pinned workspace also stays in the list");
             return undefined;
           }, [active, pinnedWorkspaces, workspaceItems]);
         }
@@ -541,12 +616,15 @@
         function PinnedRow(props) {
           var row = props.row;
           var title = row.blank ? props.t("session.blank") : (row.title || props.t("session.blank"));
+          var stamp = row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleString() : "";
+          var hint = row.where === "" ? title : title + " · " + row.where;
+          if (stamp !== "") hint += " · " + stamp;
           return h("div", { className: "dshps-row" },
             h("span", { className: "dshps-dotCell" }, h("span", { className: "dshps-dot " + row.dot })),
             h("button", {
               type: "button",
               className: "dshps-title dshps-titleButton",
-              title: row.where === "" ? title : title + " · " + row.where,
+              title: hint,
               "aria-label": props.t("row.open", { name: title }),
               onClick: () => { props.openSession(row.id); },
             }, title),
@@ -578,15 +656,26 @@
           );
         }
 
-        /** One explicitly pinned Session list. */
+        /** One explicitly pinned Session list, collapsible from its caption. */
         function SessionPinGroup(props) {
           if (props.rows.length === 0) return null;
+          var collapsed = props.collapsed === true;
+          var name = props.t("group.sessionPins");
           return h("div", { className: "dshps-group" },
             h("div", { className: "dshps-groupTitle" },
-              h("span", null, props.t("group.sessionPins")),
+              h("button", {
+                type: "button",
+                className: "dshps-groupToggle" + (collapsed ? "" : " dshps-groupToggleOpen"),
+                "aria-expanded": collapsed ? "false" : "true",
+                "aria-label": props.t(collapsed ? "group.expand" : "group.collapse", { name: name }),
+                onClick: () => {
+                  if (typeof props.onToggleCollapsed === "function") props.onToggleCollapsed();
+                },
+              }, "›"),
+              h("span", null, name),
               h("span", { className: "dshps-count" }, String(props.rows.length)),
             ),
-            props.rows.map(row => h(PinnedRow, {
+            collapsed ? null : props.rows.map(row => h(PinnedRow, {
               key: row.id,
               row: row,
               t: props.t,
@@ -642,6 +731,8 @@
             h("div", { className: "dshps-heading" }, props.t("heading")),
             h(SessionPinGroup, {
               rows: parts.sessionPins,
+              collapsed: props.sessionPinsCollapsed === true,
+              onToggleCollapsed: props.toggleSessionPinsCollapsed,
               t: props.t,
               openSession: props.openSession,
               unpinSession: props.unpinSession,
@@ -686,7 +777,7 @@
          * not, rather than failing the whole menu.
          */
         function MenuRow(props) {
-          if (typeof MenuItemButton === "function") {
+          if (MenuItemButton !== undefined && MenuItemButton !== null) {
             return h(MenuItemButton, { icon: props.icon, onSelect: props.onSelect }, props.children);
           }
           return h("button", {
@@ -737,12 +828,47 @@
           var pinnedWorkspaces = listOf(prefs && prefs.pinnedWorkspaces);
           useGroupHiding(host !== null, pinnedWorkspaces, workspaceItems);
 
+          // Pins outlive the Sessions they name. A pin stays while its Session is
+          // merely absent from one snapshot (another workspace, an archive, a
+          // search) and is dropped only after the ready snapshot has missed it for
+          // the whole grace window, so a deleted Session cannot leak forever.
+          var missing = react.useRef({});
+          react.useEffect(() => {
+            if (!enabled) return;
+            if (list === undefined || list === null || list.phase !== "ready") return;
+            var ids = Array.isArray(list.ids) ? list.ids : [];
+            if (ids.length === 0) return;
+            var known = {};
+            for (var i = 0; i < ids.length; i++) known[ids[i]] = true;
+            var now = Date.now();
+            var stale = [];
+            var pins = listOf(prefs && prefs.pinnedSessions);
+            for (var p = 0; p < pins.length; p++) {
+              var id = pins[p];
+              if (known[id] === true) {
+                delete missing.current[id];
+                continue;
+              }
+              var since = missing.current[id];
+              if (since === undefined) {
+                missing.current[id] = now;
+                continue;
+              }
+              if (now - since < PRUNE_GRACE_MS) continue;
+              delete missing.current[id];
+              stale.push(id);
+            }
+            if (stale.length > 0) props.actions.pruneSessions(stale);
+          }, [enabled, list, prefs]);
+
           var nodes = [];
           if (host !== null && (parts.sessionPins.length > 0 || parts.statusGroups.length > 0 || parts.workspacePins.length > 0)) {
             nodes.push(reactDom.createPortal(h(PinnedSection, {
               key: "section",
               parts: parts,
               collapsedWorkspaces: listOf(prefs && prefs.collapsedWorkspaces),
+              sessionPinsCollapsed: prefs !== null && typeof prefs === "object" && prefs.sessionPinsCollapsed === true,
+              toggleSessionPinsCollapsed: () => { props.actions.toggleSessionPinsCollapsed(); },
               t: props.t,
               openSession: props.openSession,
               unpinSession: (sessionId) => { props.actions.toggleSession(sessionId); },
@@ -784,12 +910,23 @@
 
         function apply(ctx) {
           var prefs = clientStore.defineStore({
-            init: () => ({ enabled: true, pinnedSessions: [], pinnedWorkspaces: [], collapsedWorkspaces: [] }),
+            init: () => ({ enabled: true, pinnedSessions: [], pinnedWorkspaces: [], collapsedWorkspaces: [], sessionPinsCollapsed: false }),
             persist: "dsh.pinned-sessions.prefs.v1",
             actions: {
               setEnabled: (draft, value) => { draft.enabled = value === true; },
+              toggleSessionPinsCollapsed: (draft) => {
+                draft.sessionPinsCollapsed = draft.sessionPinsCollapsed !== true;
+              },
               toggleSession: (draft, sessionId) => {
                 draft.pinnedSessions = toggleIn(draft.pinnedSessions, sessionId);
+              },
+              pruneSessions: (draft, ids) => {
+                var drop = {};
+                var stale = listOf(ids);
+                for (var i = 0; i < stale.length; i++) drop[stale[i]] = true;
+                draft.pinnedSessions = listOf(draft.pinnedSessions).filter(function (id) {
+                  return drop[id] !== true;
+                });
               },
               toggleWorkspace: (draft, key) => {
                 draft.pinnedWorkspaces = toggleIn(draft.pinnedWorkspaces, key);

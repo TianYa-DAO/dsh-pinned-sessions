@@ -12,7 +12,7 @@ const CLIENT = path.join(__dirname, '..', 'client.js')
 let source = fs.readFileSync(CLIENT, 'utf8')
 source = source.replace(
   'exports.name = "dsh-pinned-sessions";',
-  'exports.__debug = { deriveSections: deriveSections, baseName: baseName, toggleIn: toggleIn, cssEscape: cssEscape, PinnedSection: PinnedSection, dotOf: dotOf };\n        exports.name = "dsh-pinned-sessions";',
+  'exports.__debug = { deriveSections: deriveSections, baseName: baseName, toggleIn: toggleIn, cssEscape: cssEscape, PinnedSection: PinnedSection, dotOf: dotOf, SELECTORS: SELECTORS };\n        exports.name = "dsh-pinned-sessions";',
 )
 
 let captured = null
@@ -102,13 +102,32 @@ assert.ok(overlay.options.store.spec.persist, 'the shared store persists')
 assert.strictEqual(typeof overlay.options.store.spec.actions.toggleSession, 'function')
 assert.strictEqual(typeof overlay.options.store.spec.actions.toggleWorkspace, 'function')
 assert.strictEqual(typeof overlay.options.store.spec.actions.toggleWorkspaceOpen, 'function')
+assert.strictEqual(typeof overlay.options.store.spec.actions.pruneSessions, 'function')
+const pruned = { pinnedSessions: ['a', 'b', 'c'] }
+overlay.options.store.spec.actions.pruneSessions(pruned, ['b'])
+assert.strictEqual(pruned.pinnedSessions.join(','), 'a,c', 'a stale pin is dropped and the rest keep their order')
 const initial = overlay.options.store.spec.init()
 assert.strictEqual(initial.enabled, true)
 assert.strictEqual(initial.pinnedSessions.join(','), '')
 assert.strictEqual(initial.pinnedWorkspaces.join(','), '')
+assert.strictEqual(initial.sessionPinsCollapsed, false, 'the global-pin group starts expanded')
+assert.strictEqual(typeof overlay.options.store.spec.actions.toggleSessionPinsCollapsed, 'function')
+const pinsDraft = { sessionPinsCollapsed: undefined }
+overlay.options.store.spec.actions.toggleSessionPinsCollapsed(pinsDraft)
+assert.strictEqual(pinsDraft.sessionPinsCollapsed, true, 'one click collapses the global-pin group')
+overlay.options.store.spec.actions.toggleSessionPinsCollapsed(pinsDraft)
+assert.strictEqual(pinsDraft.sessionPinsCollapsed, false, 'the next click expands it again')
 
 // ---- derivation -----------------------------------------------------------
-const { deriveSections, baseName, toggleIn, cssEscape, PinnedSection, dotOf } = moduleExports.__debug
+const { deriveSections, baseName, toggleIn, cssEscape, PinnedSection, dotOf, SELECTORS } = moduleExports.__debug
+
+// ---- shipped-DOM selectors -------------------------------------------------
+assert.strictEqual(SELECTORS.region, '[data-slot="sidebar.workspaces"]', 'the region selector is pinned by test')
+assert.strictEqual(SELECTORS.workspaceRow, '[data-row-key^="workspace:"]', 'the workspace row selector is pinned by test')
+assert.ok(SELECTORS.scrollerToken.test('_9lTDKa_list'), 'the scroller class token matches a scoped `list` class')
+assert.ok(!SELECTORS.scrollerToken.test('_9lTDKa_listArea'), 'the list area is not mistaken for the scroller')
+assert.ok(SELECTORS.railToken.test('_9lTDKa_root _9lTDKa_rail'), 'the rail class token matches a scoped `rail` class')
+assert.ok(!SELECTORS.railToken.test('_9lTDKa_root'), 'a normal root is not the rail')
 const eq = (actual, expected, message) => assert.strictEqual(actual.join('|'), expected.join('|'), message)
 
 const summary = (id, extra) => Object.assign({
@@ -166,6 +185,15 @@ eq(pinned.workspacePins.map(w => w.key), ['ws-other'])
 assert.strictEqual(pinned.workspacePins[0].title, 'other')
 eq(pinned.workspacePins[0].sessions.map(r => r.id), [], 'archived, subagent and non-current blank members are dropped')
 
+// collapsing the explicit pins hands them back to the state groups
+const folded = deriveSections(list, statuses, workspaces, {
+  pinnedSessions: ['run'],
+  sessionPinsCollapsed: true,
+})
+eq(folded.sessionPins.map(r => r.id), ['run'])
+eq(folded.statusGroups[0].rows.map(r => r.id), ['run'], 'a collapsed pin group returns its Sessions to the state groups')
+eq(folded.statusGroups.map(g => g.key), ['group.running', 'group.unread', 'group.current'])
+
 // blank Sessions appear only while they are the open one
 list.byId.open.retainedBy = {}
 list.byId.blankOpen.retainedBy = { mainView: 1 }
@@ -202,6 +230,8 @@ const parts = {
 const tree = PinnedSection({
   parts,
   collapsedWorkspaces: [],
+  sessionPinsCollapsed: false,
+  toggleSessionPinsCollapsed: () => {},
   t,
   openSession: () => {},
   unpinSession: () => {},
@@ -212,7 +242,10 @@ assert.strictEqual(tree.type, 'div')
 assert.strictEqual(tree.children[0].children[0], 'heading')
 assert.strictEqual(tree.children[1].type.name, 'SessionPinGroup')
 const pinGroup = tree.children[1].type(tree.children[1].props)
-assert.strictEqual(pinGroup.children[0].children[0].children[0], 'group.sessionPins')
+const pinCaption = pinGroup.children[0]
+assert.strictEqual(pinCaption.children[0].props.className, 'dshps-groupToggle dshps-groupToggleOpen', 'the group caption carries the collapse toggle on its left')
+assert.strictEqual(pinCaption.children[0].props['aria-expanded'], 'true')
+assert.strictEqual(pinCaption.children[1].children[0], 'group.sessionPins')
 const pinRows = pinGroup.children[1].map(element => element.type(element.props))
 assert.strictEqual(pinRows.length, 2)
 assert.strictEqual(pinRows[0].children[1].children[0], 'S-plain')
@@ -221,6 +254,11 @@ assert.strictEqual(pinRow.props.className, 'dshps-row')
 assert.strictEqual(pinRow.children[0].children[0].props.className, 'dshps-dot dshps-dot-running')
 assert.strictEqual(pinRow.children[1].children[0], 'S-run')
 assert.strictEqual(pinRow.children[3].props.className, 'dshps-action', 'pinned rows carry an unpin control')
+const collapsedPins = tree.children[1].type(Object.assign({}, tree.children[1].props, { collapsed: true }))
+assert.strictEqual(collapsedPins.children[1], null, 'a collapsed global-pin group renders no rows')
+assert.strictEqual(collapsedPins.children[0].children[0].props.className, 'dshps-groupToggle')
+assert.strictEqual(collapsedPins.children[0].children[0].props['aria-expanded'], 'false')
+assert.strictEqual(collapsedPins.children[0].children[2].children[0], '2', 'the count stays readable while collapsed')
 const statusList = tree.children[2]
 assert.strictEqual(statusList.length, 2, 'unread and current groups (the pinned running Session left them)')
 assert.strictEqual(statusList[0].type.name, 'StatusGroup')
